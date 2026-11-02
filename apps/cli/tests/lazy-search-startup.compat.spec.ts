@@ -21,8 +21,8 @@ import { describe, expect, it } from 'vitest'
 const repoRoot = fileURLToPath(new URL('../../../', import.meta.url))
 const builtBin = join(repoRoot, 'apps/cli/lib/bin.js')
 const webDist = join(repoRoot, 'apps/web/dist/index.html')
-// Full-text session search ships off (`openAt: never` on both layers): the
-// base patch carries the default, and the web restatement must not re-enable it.
+// The base patch leaves full-text search off. The Web restatement opens the
+// index on the first search without importing SQLite during startup.
 const baseConfigPath = join(repoRoot, 'packages/bundle/base/cordis.patch.yml')
 const webConfigPath = join(repoRoot, 'packages/bundle/web-app/cordis.patch.yml')
 const requireBuiltArtifacts = process.env.DSH_REQUIRE_BUILT_CLI_SMOKE === '1'
@@ -111,8 +111,8 @@ describe.skipIf(!requireBuiltArtifacts)('built CLI lazy-search startup', () => {
     const webRow = webRows.find(row => row.id === 'session-query-sqlite')
     expect(baseRow?.config?.openAt).toBe('never')
     expect(baseRow?.disabled).toBeUndefined()
-    // The web restatement keeps the shipped default; opting in is a later layer's override.
-    expect(webRow?.config?.openAt).toBe('never')
+    // The Web surface searches message content on the first query.
+    expect(webRow?.config?.openAt).toBe('first-search')
     expect(webRow?.disabled).toBeUndefined()
 
     const cwd = await mkdtemp(join(tmpdir(), 'dsh-cli-lazy-search-'))
