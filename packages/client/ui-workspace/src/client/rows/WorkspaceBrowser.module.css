@@ -278,6 +278,49 @@
   background: var(--dsw-alias-interactive-bg-hover);
 }
 
+.filterBar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  padding: 0 4px 6px;
+  overflow: hidden;
+}
+
+.filterTab,
+.filterChip {
+  flex: none;
+  height: 22px;
+  padding: 0 8px;
+  border: 1px solid transparent;
+  border-radius: 11px;
+  background: transparent;
+  color: var(--dsw-alias-label-tertiary);
+  font: inherit;
+  font-size: 12px;
+  line-height: 20px;
+  cursor: pointer;
+}
+
+.filterTabOn {
+  color: var(--dsw-alias-label-primary);
+  background: var(--dsw-alias-interactive-bg-hover);
+}
+
+.filterChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  max-width: 120px;
+}
+
+.filterChipDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  flex: none;
+}
+
 /* List seat: always mounted so the shell foot never moves. */
 .listArea {
   flex: 1;

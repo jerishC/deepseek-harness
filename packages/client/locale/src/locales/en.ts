@@ -31,6 +31,7 @@ export const en = {
   'expand': 'Expand',
   'back': 'Back',
   'brand.localBuild': 'DSH Local Build',
+  'brand.upstreamPrefix': 'upstream',
   'unknown': 'Unknown',
   'none': 'None',
   'truncated': 'Truncated',

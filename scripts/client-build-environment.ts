@@ -106,6 +106,46 @@ export function repositoryGitDirty(root: string): boolean | undefined {
   return status.stdout !== ''
 }
 
+/** Official deepseek-ai commit contained in HEAD, plus its commit date. */
+export function repositoryUpstreamAnchor(root: string): { hash: string; date: string } | undefined {
+  const remote = officialRemoteName(root)
+  if (remote === undefined) return undefined
+  const ref = gitOutput(root, ['rev-parse', '--verify', `${remote}/master`])
+    ?? gitOutput(root, ['rev-parse', '--verify', `${remote}/HEAD`])
+  if (ref === undefined) return undefined
+  const base = gitOutput(root, ['merge-base', 'HEAD', ref]) ?? ref
+  if (!/^[0-9a-f]{7,40}$/iu.test(base)) return undefined
+  const date = gitOutput(root, ['log', '-1', '--format=%cs', base])
+  if (date === undefined || !/^\d{4}-\d{2}-\d{2}$/.test(date)) return undefined
+  return { hash: base.slice(0, 7).toLowerCase(), date }
+}
+
+/** Read the remote name from `.git/config` so checkouts without the official remote skip Git. */
+function officialRemoteName(root: string): string | undefined {
+  let text: string
+  try {
+    text = readFileSync(resolve(root, '.git', 'config'), 'utf8')
+  } catch {
+    return undefined
+  }
+  for (const block of text.split(/\r?\n(?=\[)/)) {
+    const header = /^\[remote "([^"]+)"\]/.exec(block)
+    if (header?.[1] !== undefined && block.includes('deepseek-ai/deepseek-harness')) return header[1]
+  }
+  return undefined
+}
+
+function gitOutput(root: string, args: readonly string[]): string | undefined {
+  const result = spawnSync('git', [...args], {
+    cwd: root,
+    encoding: 'utf8',
+    stdio: ['ignore', 'pipe', 'ignore'],
+  })
+  if (result.status !== 0) return undefined
+  const text = result.stdout.trim()
+  return text === '' ? undefined : text
+}
+
 /**
  * Resolve the public environment for a complete default build from one checkout.
  * Repository-owned metadata replaces inherited values; other public values pass through.
@@ -121,12 +161,19 @@ export function repositoryClientBuildEnvironment(
   delete inherited.DSH_CLIENT_COMMIT_HASH
   delete inherited.DSH_CLIENT_GIT_DIRTY
   delete inherited.DSH_CLIENT_VERSION
+  delete inherited.DSH_CLIENT_UPSTREAM_COMMIT
+  delete inherited.DSH_CLIENT_UPSTREAM_DATE
   const dirty = repositoryGitDirty(root)
+  const upstream = repositoryUpstreamAnchor(root)
   return {
     ...inherited,
     DSH_CLIENT_COMMIT_HASH: repositoryCommitHash(root, environment),
     ...(dirty === true ? { DSH_CLIENT_GIT_DIRTY: 'true' } : {}),
     DSH_CLIENT_VERSION: repositoryVersion(root),
+    ...(upstream === undefined ? {} : {
+      DSH_CLIENT_UPSTREAM_COMMIT: upstream.hash,
+      DSH_CLIENT_UPSTREAM_DATE: upstream.date,
+    }),
   }
 }
 

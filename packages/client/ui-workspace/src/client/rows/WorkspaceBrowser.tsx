@@ -21,11 +21,13 @@ import type {
 import type { WorkspaceId, WorkspaceView } from '@deepseek-ai/dsh-api-workspace-controller/client'
 import type { SessionId } from '@deepseek-ai/dsh-session/types'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
-import type { SessionNode, SessionOrderBy } from '../tree.ts'
+import type { GroupNode, SessionNode, SessionOrderBy } from '../tree.ts'
 import {
   deriveFlat, deriveGroups, deriveSearchResults, owningGroupKey, UNGROUPED_KEY,
 } from '../tree.ts'
 import { ProjectRowItem, SearchResultItem, SessionNodeItem } from './Rows.tsx'
+import { OrganizeDialog } from '../personal/OrganizeDialog.tsx'
+import { setTagRequestHandler, useOrganize } from '../personal/organize.ts'
 import { FLAT_SESSION_ORDER_KEY } from '../stores.ts'
 import { WorkspacePickFlow } from '../WorkspacePicker.tsx'
 import css from './WorkspaceBrowser.module.css'
@@ -66,6 +68,26 @@ function sanitizeSearchQuery(value: string): string {
   const next = withoutNul.charCodeAt(end)
   if (last >= 0xD800 && last <= 0xDBFF && next >= 0xDC00 && next <= 0xDFFF) end--
   return withoutNul.slice(0, end)
+}
+
+/** A collapsed group stores no row nodes, so filter membership has to use the Host ids. */
+function groupMatchesFilter(
+  group: GroupNode,
+  list: SessionListState,
+  workspaces: readonly WorkspaceView[],
+  includeSession: (id: SessionId) => boolean,
+): boolean {
+  const workspace = group.workspaceId === undefined
+    ? undefined
+    : workspaces.find(item => item.workspaceId === group.workspaceId)
+  if (workspace !== undefined) {
+    return workspace.sessionIds.some(id => list.byId[id] !== undefined && includeSession(id))
+  }
+  const accounted = new Set<SessionId>()
+  for (const item of workspaces) {
+    for (const id of item.sessionIds) accounted.add(id)
+  }
+  return list.ids.some(id => !accounted.has(id) && list.byId[id] !== undefined && includeSession(id))
 }
 
 /** Immutable membership toggle for the local expand-all array. */
@@ -270,6 +292,8 @@ type SessionTreeProps = Pick<
   revealSessionId?: SessionId | undefined
   /** Acknowledge that the chosen Session row has been revealed. */
   onSessionRevealed: (sessionId: SessionId) => void
+  /** When set, rows outside the active tab (unfinished or one tag) stay hidden. */
+  includeSession?: ((id: SessionId) => boolean) | undefined
 }
 
 /** The scrolling session tree; unmounting drops the sessions subscription and expand-all state. */
@@ -279,8 +303,8 @@ function SessionTree({
   onRenameRequest, onDeleteRequest, onSessionRename, onSessionArchive,
   insertWorkspaceBefore, insertSessionBefore, orderBy,
   groupExpansion, setGroupExpanded,
-  sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder, home, t,
-  revealSessionId, onSessionRevealed,
+  sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder,   home, t,
+  revealSessionId, onSessionRevealed, includeSession,
 }: SessionTreeProps) {
   const panelActive = usePanelInfo(info => info.activePanelId !== null)
   const list = useSessions(s => s)
@@ -460,9 +484,18 @@ function SessionTree({
         {groups.length === 0 && (
           <div className={css.empty}>{t('empty.none')}</div>
         )}
+        {includeSession !== undefined && groups.length > 0
+          && groups.every(group => !groupMatchesFilter(group, list, workspaces, includeSession)) && (
+          <div className={css.empty}>{t('filter.empty')}</div>
+        )}
         {groups.map((group) => {
+          if (includeSession !== undefined
+            && !groupMatchesFilter(group, list, workspaces, includeSession)) return null
+          const sessions = includeSession === undefined
+            ? group.sessions
+            : group.sessions.filter(node => includeSession(node.id))
           const workspaceId = group.workspaceId
-          const collapsed = collapsedSessionRows(group.sessions)
+          const collapsed = collapsedSessionRows(sessions)
           const sessionsExpanded = expandedSessionGroups.includes(group.key)
           const workspaceMarker = workspaceId !== undefined && workspaceDrag?.over?.id === workspaceId
             ? workspaceDrag.over.half
@@ -550,7 +583,7 @@ function SessionTree({
                   }}
               />
               {(sessionsExpanded
-                ? group.sessions
+                ? sessions
                 : collapsed.rows
               ).map((node) => {
               // Session drag never leaves its group. Ungrouped writes only the
@@ -622,7 +655,7 @@ function FlatList({
   useSessions, useSessionPendingInteraction, open, forkSession, onSessionRename, onSessionArchive,
   archivedSessionIds, usePanelInfo,
   orderBy, sessionOrderByAccount, sessionUpdatedAtByAccount, syncSessionOrderAccount, setSessionOrder,
-  revealSessionId, onSessionRevealed, t,
+  revealSessionId, onSessionRevealed, t, includeSession,
 }: Pick<
   SessionTreeProps,
   | 'useSessions'
@@ -640,6 +673,7 @@ function FlatList({
   | 'setSessionOrder'
   | 'revealSessionId'
   | 'onSessionRevealed'
+  | 'includeSession'
   | 't'
 >) {
   const panelActive = usePanelInfo(info => info.activePanelId !== null)
@@ -697,13 +731,14 @@ function FlatList({
     setSessionOrder(FLAT_SESSION_ORDER_KEY, nextOrder.map(id => id as string))
   }
   const now = Date.now()
+  const shown = includeSession === undefined ? rows : rows.filter(node => includeSession(node.id))
   return (
     <div className={clsx(css.treeBody, css.wide)}>
       <div className={clsx(css.list, css.flatList)} role="tree" aria-label={t('section.sessions')}>
-        {rows.length === 0 && (
-          <div className={css.empty}>{t('empty.none')}</div>
+        {shown.length === 0 && (
+          <div className={css.empty}>{includeSession === undefined ? t('empty.none') : t('filter.empty')}</div>
         )}
-        {rows.map((node) => {
+        {shown.map((node) => {
           const active = drag !== null
           return (
             <SessionNodeItem
@@ -766,8 +801,9 @@ function SearchResults({
   remote,
   resultLimit,
   usePanelInfo,
+  includeSession,
   t,
-}: Pick<SessionTreeProps, 'useSessions' | 'useSessionPendingInteraction' | 'open' | 't' | 'usePanelInfo'> & {
+}: Pick<SessionTreeProps, 'useSessions' | 'useSessionPendingInteraction' | 'open' | 't' | 'usePanelInfo' | 'includeSession'> & {
   workspaces: readonly WorkspaceView[]
   archivedSessionIds: readonly SessionNode['id'][]
   query: string
@@ -794,17 +830,22 @@ function SearchResults({
   )
   const pending = currentRemote.status === 'loading'
   const failed = currentRemote.status === 'error'
+  const visibleItems = includeSession === undefined
+    ? results.items
+    : results.items.filter(item => includeSession(item.id))
+  const contentHits = visibleItems.filter(item => item.snippet !== undefined).length
 
   return (
     <div className={clsx(css.treeBody, css.wide)}>
       <div className={css.list}>
         <div className={css.searchTree} role="tree" aria-label={t('search.results.aria')}>
-          {results.items.map(result => (
+          {visibleItems.map(result => (
             <SearchResultItem
               key={result.id}
               result={result}
               currentId={panelActive ? undefined : list.current}
               onOpen={open}
+              query={query}
               t={t}
             />
           ))}
@@ -817,8 +858,11 @@ function SearchResults({
             {t('search.unavailable')}
           </div>
         )}
-        {!pending && results.items.length === 0 && (
+        {!pending && visibleItems.length === 0 && (
           <div className={css.empty}>{t('search.noMatches')}</div>
+        )}
+        {!pending && !failed && visibleItems.length > 0 && (
+          <div className={css.searchStatus}>{t('search.contentCount', { n: contentHits })}</div>
         )}
         {results.hasMore && (
           <div className={css.searchStatus}>
@@ -911,6 +955,37 @@ export function WorkspaceBrowser({
   }, [actions.retainAccountKeys, workspacePhase, workspaces])
   // The query outlives the tree and the input (both wide-only) so collapsing
   // does not silently drop an in-progress filter.
+  const organize = useOrganize()
+  const sessionIds = useSessions(state => state.ids)
+  const [listFilter, setListFilter] = useState<
+    { kind: 'all' } | { kind: 'unfinished' } | { kind: 'tag'; tagId: string }
+  >({ kind: 'all' })
+  const [tagSessionId, setTagSessionId] = useState<string | undefined>(undefined)
+  const [tagManagerOpen, setTagManagerOpen] = useState(false)
+  useEffect(() => {
+    setTagRequestHandler((sessionId) => {
+      setTagSessionId(sessionId)
+      setTagManagerOpen(false)
+    })
+    return () => { setTagRequestHandler(undefined) }
+  }, [])
+  useEffect(() => {
+    if (listFilter.kind !== 'tag') return
+    if (organize.tags.some(tag => tag.id === listFilter.tagId)) return
+    setListFilter({ kind: 'all' })
+  }, [listFilter, organize.tags])
+  const includeSession = useMemo(() => {
+    if (listFilter.kind === 'all') return undefined
+    if (listFilter.kind === 'unfinished') {
+      return (id: SessionId) => organize.marks[id] === 'unfinished'
+    }
+    const tagId = listFilter.tagId
+    return (id: SessionId) => (organize.sessionTags[id] ?? []).includes(tagId)
+  }, [listFilter, organize])
+  const unfinishedCount = sessionIds.filter(id => organize.marks[id] === 'unfinished').length
+  const activeTag = listFilter.kind === 'tag'
+    ? organize.tags.find(tag => tag.id === listFilter.tagId)
+    : undefined
   const [query, setQuery] = useState('')
   const [searchExpanded, setSearchExpanded] = useState(false)
   const [revealSessionId, setRevealSessionId] = useState<SessionId | undefined>(undefined)
@@ -1254,6 +1329,48 @@ export function WorkspaceBrowser({
       {/* Always-mounted seat keeps the region's flex slot while the list
           itself is wide-only. */}
       <div className={css.listArea}>
+        {wide && (
+          <div className={css.filterBar} role="tablist" aria-label={t('filter.tags')}>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={listFilter.kind === 'all'}
+              className={clsx(css.filterTab, listFilter.kind === 'all' && css.filterTabOn)}
+              onClick={() => { setListFilter({ kind: 'all' }) }}
+            >
+              {t('filter.all')}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={listFilter.kind === 'unfinished'}
+              className={clsx(css.filterTab, listFilter.kind === 'unfinished' && css.filterTabOn)}
+              onClick={() => { setListFilter({ kind: 'unfinished' }) }}
+            >
+              {t('filter.unfinished')}{unfinishedCount > 0 ? ` ${unfinishedCount}` : ''}
+            </button>
+            <button
+              type="button"
+              role="tab"
+              aria-selected={tagManagerOpen}
+              className={clsx(css.filterTab, (tagManagerOpen || listFilter.kind === 'tag') && css.filterTabOn)}
+              onClick={() => { setTagSessionId(undefined); setTagManagerOpen(true) }}
+            >
+              {t('filter.tags')}
+            </button>
+            {activeTag !== undefined && (
+              <button
+                type="button"
+                className={css.filterChip}
+                onClick={() => { setListFilter({ kind: 'all' }) }}
+              >
+                <span className={css.filterChipDot} style={{ background: activeTag.color }} />
+                {activeTag.name}
+                <span aria-hidden="true">×</span>
+              </button>
+            )}
+          </div>
+        )}
         {wide && (normalizedQuery !== ''
           ? (
             <SearchResults
@@ -1266,6 +1383,7 @@ export function WorkspaceBrowser({
               query={normalizedQuery}
               remote={remoteSearch}
               resultLimit={searchResultLimit}
+              includeSession={includeSession}
               t={t}
             />
           )
@@ -1284,6 +1402,7 @@ export function WorkspaceBrowser({
                 setSessionOrder={actions.setSessionOrder}
                 revealSessionId={revealSessionId}
                 onSessionRevealed={acknowledgeSessionReveal}
+                includeSession={includeSession}
                 t={t}
               />
             )
@@ -1311,6 +1430,7 @@ export function WorkspaceBrowser({
                 orderBy={orderBy}
                 revealSessionId={revealSessionId}
                 onSessionRevealed={acknowledgeSessionReveal}
+                includeSession={includeSession}
                 home={home}
                 t={t}
                 onRenameRequest={(workspaceId, currentTitle) => {
@@ -1325,6 +1445,20 @@ export function WorkspaceBrowser({
               />
             ))}
       </div>
+
+      <OrganizeDialog
+        open={tagManagerOpen || tagSessionId !== undefined}
+        sessionId={tagSessionId}
+        activeTagId={listFilter.kind === 'tag' ? listFilter.tagId : undefined}
+        onFilterTag={(tagId) => {
+          setListFilter(tagId === undefined ? { kind: 'all' } : { kind: 'tag', tagId })
+        }}
+        onClose={() => {
+          setTagManagerOpen(false)
+          setTagSessionId(undefined)
+        }}
+        t={t}
+      />
 
       <Modal
         open={renameTarget !== null}

@@ -89,6 +89,48 @@
   color: var(--dsw-alias-label-secondary);
 }
 
+.searchMark {
+  background: #fde68a;
+  color: inherit;
+  padding: 0 1px;
+  border-radius: 2px;
+}
+
+.contentHit {
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #92400e;
+  font-size: 10px;
+  line-height: 14px;
+}
+
+.markFlag {
+  flex: none;
+  margin-right: 4px;
+  padding: 0 4px;
+  border-radius: 4px;
+  background: #fef3c7;
+  color: #b45309;
+  font-size: 10px;
+  line-height: 16px;
+}
+
+.tagDots {
+  flex: none;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  margin-right: 4px;
+}
+
+.tagDot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+}
+
 /* Compact one-line Workspace row after removing the session-count subtitle. */
 .projectRow {
   height: 34px;

@@ -38,6 +38,14 @@ const COLLAPSE_SETTLE_MS = 150
  */
 const SCROLLBAR_LINGER_MS = 2000
 
+/** Official commit this checkout contains, embedded at build time. */
+function upstreamRevision(): string | undefined {
+  const hash = process.env.DSH_CLIENT_UPSTREAM_COMMIT
+  if (hash === undefined || hash === '') return undefined
+  const date = process.env.DSH_CLIENT_UPSTREAM_DATE
+  return date === undefined || date === '' ? hash : `${hash} · ${date}`
+}
+
 /** Format complete-build metadata for the local brand badge. */
 function localBuildVersion(): string | undefined {
   const version = process.env.DSH_CLIENT_VERSION
@@ -162,6 +170,7 @@ export function SidebarRoot({
   }, [pointerInside])
 
   const buildVersion = localBuildVersion()
+  const upstream = upstreamRevision()
 
   return (
     <div
@@ -193,14 +202,17 @@ export function SidebarRoot({
               </span>
               <span className={css.brandName}>
                 {renderSlot('sidebar.brand.name', {}, {
-                  fallback: buildVersion === undefined
-                    ? <span className={css.fallbackBrandName}>{t('brand.localBuild')}</span>
-                    : (
-                      <span className={css.localBuildBrand}>
-                        <span className={css.localBuildTitle}>{t('brand.localBuild')}</span>
-                        <span className={css.buildVersion}>{buildVersion}</span>
-                      </span>
-                    ),
+                  fallback: (
+                    <span className={css.localBuildBrand}>
+                      <span className={css.localBuildTitle}>{t('brand.localBuild')}</span>
+                      {buildVersion !== undefined && <span className={css.buildVersion}>{buildVersion}</span>}
+                      {upstream !== undefined && (
+                        <span className={css.upstreamVersion} title={upstream}>
+                          {t('brand.upstreamPrefix')} {upstream}
+                        </span>
+                      )}
+                    </span>
+                  ),
                 })}
               </span>
             </span>

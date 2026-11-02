@@ -5,7 +5,7 @@
  * except workspace Rename/Delete and session Rename/Fork/Archive; the session
  * and workspace hover cards are suppressed while a menu is open.
  */
-import { useEffect, useRef, useState } from 'react'
+import { useEffect, useRef, useState, type ReactNode } from 'react'
 import clsx from 'clsx'
 import {
   HoverCard, IconAlarmClockOutline16, IconArchiveOutline20, IconBranchOutline16,
@@ -17,6 +17,7 @@ import type { StateDotState } from '@deepseek-ai/dsh-client-ui-primitives'
 import { abbreviateHomePath } from '@deepseek-ai/dsh-util-workspace-path'
 import type { WorkspaceBrowserProps } from '../contract/slots.ts'
 import type { GroupNode, SearchResultNode, SessionNode } from '../tree.ts'
+import { requestSessionTags, setMark, useOrganize } from '../personal/organize.ts'
 import css from './Rows.module.css'
 
 /** The standard locale seat, prop-passed from the browser root. */
@@ -31,6 +32,28 @@ function displayTitle(node: SessionNode, t: RowTranslate): string {
 function timeLabel(updatedAt: number, now: number, t: RowTranslate): string {
   const { unit, n } = relativeTime(updatedAt, now)
   return unit === 'now' ? t('time.now') : t(`time.${unit}`, { n })
+}
+
+/** Highlight a literal query the way the transcript viewer marks in-content hits. */
+function highlightQuery(text: string, query: string): ReactNode {
+  const needle = query.trim()
+  if (needle === '') return text
+  const lower = text.toLowerCase()
+  const target = needle.toLowerCase()
+  const nodes: ReactNode[] = []
+  let from = 0
+  let index = lower.indexOf(target, from)
+  let key = 0
+  while (index !== -1) {
+    if (index > from) nodes.push(text.slice(from, index))
+    nodes.push(<mark key={key} className={css.searchMark}>{text.slice(index, index + target.length)}</mark>)
+    key += 1
+    from = index + target.length
+    index = lower.indexOf(target, from)
+  }
+  if (nodes.length === 0) return text
+  if (from < text.length) nodes.push(text.slice(from))
+  return nodes
 }
 
 /** Hover-card variant: distances wrap in the ago template; the now bucket stays bare (no "now ago"). */
@@ -324,11 +347,13 @@ function SessionHoverContent({ node, now, t }: { node: SessionNode; now: number;
  * @param props.t - Workspace-browser translation seat.
  * @returns the result button.
  */
-export function SearchResultItem({ result, currentId, onOpen, t }: {
+export function SearchResultItem({ result, currentId, onOpen, t, query = '' }: {
   result: SearchResultNode
   currentId: string | undefined
   onOpen: (id: SearchResultNode['id']) => void
   t: RowTranslate
+  /** Literal query used to mark title and content-snippet hits. */
+  query?: string | undefined
 }) {
   const selected = result.id === currentId
   const statuses = sessionStatuses(result, t)
@@ -353,7 +378,10 @@ export function SearchResultItem({ result, currentId, onOpen, t }: {
       <span className={css.searchResultMeta}>
         <span className={css.searchResultWorkspace}>{result.workspace || t('group.ungrouped')}</span>
         {result.snippet !== undefined && (
-          <span className={css.searchResultSnippet}>{result.snippet}</span>
+          <>
+            <span className={css.contentHit}>{t('search.contentHit')}</span>
+            <span className={css.searchResultSnippet}>{highlightQuery(result.snippet, query)}</span>
+          </>
         )}
       </span>
     </button>
@@ -397,8 +425,15 @@ export function SessionNodeItem({
   flat?: boolean | undefined
   t: RowTranslate
 }) {
+  const organize = useOrganize()
   const row = node
   const title = displayTitle(node, t)
+  const mark = organize.marks[node.id]
+  const tags = (organize.sessionTags[node.id] ?? [])
+    .flatMap((id) => {
+      const tag = organize.tags.find(item => item.id === id)
+      return tag === undefined ? [] : [tag]
+    })
   const selected = node.id === currentId
   const statuses = sessionStatuses(node, t)
   const primaryStatus = statuses[0]
@@ -416,6 +451,9 @@ export function SessionNodeItem({
   const sessionMenuItems = [
     { id: 'rename', label: t('rename'), icon: <IconEditOutline16 /> },
     { id: 'fork', label: t('menu.fork'), icon: <IconBranchOutline16 /> },
+    { id: 'mark-unfinished', label: t('menu.markUnfinished'), icon: <IconAlarmClockOutline16 /> },
+    { id: 'mark-done', label: t('menu.markDone'), icon: <IconEditOutline16 /> },
+    { id: 'tags', label: t('menu.editTags'), icon: <IconFolderClose16 /> },
     // 20-native glyph in the menu's 16px icon slot (Menu.module.css .itemIcon).
     { id: 'archive', label: t('menu.archiveSession'), icon: <IconArchiveOutline20 size={16} /> },
   ]
@@ -465,6 +503,14 @@ export function SessionNodeItem({
         </span>
       )}
       <span className={css.title}>{title}</span>
+      {mark === 'unfinished' && <span className={css.markFlag}>{t('badge.unfinished')}</span>}
+      {tags.length > 0 && (
+        <span className={css.tagDots}>
+          {tags.map(tag => (
+            <span key={tag.id} className={css.tagDot} style={{ background: tag.color }} title={tag.name} />
+          ))}
+        </span>
+      )}
       {row.hasActiveSchedule && <ActiveScheduleIndicator t={t} />}
       {/* A blank New Session row is a provisional placeholder: nothing has
           happened in it yet, so a "now" timestamp and the row verbs
@@ -481,6 +527,9 @@ export function SessionNodeItem({
               setMenuOpen(false)
               if (id === 'rename') onRename(node.id, row.title)
               if (id === 'fork') onFork(node.id)
+              if (id === 'mark-unfinished') setMark(node.id, 'unfinished')
+              if (id === 'mark-done') setMark(node.id, 'done')
+              if (id === 'tags') requestSessionTags(node.id)
               if (id === 'archive') onArchive(node.id)
             }}
             portal
